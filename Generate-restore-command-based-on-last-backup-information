@@ -45,16 +45,20 @@ FETCH NEXT FROM file_cursor INTO @LogicalName, @PhysicalName;
 WHILE @@FETCH_STATUS = 0
 BEGIN
     SET @MoveCommand = @MoveCommand + 
-        'MOVE ''' + @LogicalName + ''' TO ''' + @PhysicalName + ''', ';
-    
+        'MOVE ''' + @LogicalName + ''' TO ''' + @PhysicalName + '''';
+
+    -- Fetch the next file
     FETCH NEXT FROM file_cursor INTO @LogicalName, @PhysicalName;
+
+    -- If there's another file, add a comma and space for the next MOVE
+    IF @@FETCH_STATUS = 0
+    BEGIN
+        SET @MoveCommand = @MoveCommand + ', ';
+    END
 END
 
 CLOSE file_cursor;
 DEALLOCATE file_cursor;
-
--- Remove the trailing comma and space from the move command
-SET @MoveCommand = LEFT(@MoveCommand, LEN(@MoveCommand) - 2);
 
 -- Construct the RESTORE DATABASE command
 SET @RestoreCommand = 'RESTORE DATABASE [' + @DatabaseName + '] FROM DISK = ''' + @BackupFile + ''' WITH ' + 
