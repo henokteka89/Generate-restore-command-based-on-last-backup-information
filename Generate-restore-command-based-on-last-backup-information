@@ -1,0 +1,64 @@
+DECLARE @DatabaseName NVARCHAR(128) = 'YourDatabaseName';  -- Replace with your actual database name
+DECLARE @BackupFile NVARCHAR(255);
+DECLARE @RestoreCommand NVARCHAR(MAX);
+DECLARE @MoveCommand NVARCHAR(MAX) = '';
+DECLARE @LogicalName NVARCHAR(128);
+DECLARE @PhysicalName NVARCHAR(260);
+
+-- Get the most recent backup file for the database
+SELECT TOP 1
+    @BackupFile = mf.physical_device_name
+FROM 
+    msdb.dbo.backupset bs
+JOIN 
+    msdb.dbo.backupmediafamily mf ON bs.media_set_id = mf.media_set_id
+WHERE 
+    bs.database_name = @DatabaseName
+    AND bs.type = 'D'  -- Full Backup
+ORDER BY 
+    bs.backup_finish_date DESC;
+
+-- Check if a backup was found
+IF @BackupFile IS NULL
+BEGIN
+    PRINT 'No backup found for the specified database.';
+    RETURN;
+END
+
+-- Get the logical and physical file names from the most recent backup
+DECLARE file_cursor CURSOR FOR
+SELECT 
+    bmf.logical_name,
+    bmf.physical_name
+FROM 
+    msdb.dbo.backupfile bmf
+JOIN 
+    msdb.dbo.backupset bs ON bmf.backup_set_id = bs.backup_set_id
+WHERE 
+    bs.database_name = @DatabaseName
+    AND bs.type = 'D'  -- Full Backup
+    AND bs.backup_finish_date = (SELECT MAX(backup_finish_date) FROM msdb.dbo.backupset WHERE database_name = @DatabaseName AND type = 'D');
+
+OPEN file_cursor;
+FETCH NEXT FROM file_cursor INTO @LogicalName, @PhysicalName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @MoveCommand = @MoveCommand + 
+        'MOVE ''' + @LogicalName + ''' TO ''' + @PhysicalName + ''', ';
+    
+    FETCH NEXT FROM file_cursor INTO @LogicalName, @PhysicalName;
+END
+
+CLOSE file_cursor;
+DEALLOCATE file_cursor;
+
+-- Remove the trailing comma and space from the move command
+SET @MoveCommand = LEFT(@MoveCommand, LEN(@MoveCommand) - 2);
+
+-- Construct the RESTORE DATABASE command
+SET @RestoreCommand = 'RESTORE DATABASE [' + @DatabaseName + '] FROM DISK = ''' + @BackupFile + ''' WITH ' + 
+                      @MoveCommand + ', REPLACE, RECOVERY;';
+
+-- Print the command
+PRINT @RestoreCommand;
